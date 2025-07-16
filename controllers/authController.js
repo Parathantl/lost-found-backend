@@ -58,6 +58,7 @@ const registerUser = async (req, res) => {
 // @desc    Login user
 // @route   POST /api/auth/login
 // @access  Public
+// controllers/authController.js
 const loginUser = async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -71,9 +72,12 @@ const loginUser = async (req, res) => {
     const user = await User.findOne({ email });
 
     if (user && (await user.comparePassword(password))) {
-      // Update last login
-      user.lastLogin = new Date();
-      await user.save();
+      // Update last login without running validation
+      await User.findByIdAndUpdate(
+        user._id, 
+        { lastLogin: new Date() }, 
+        { runValidators: false }
+      );
 
       res.json({
         _id: user._id,
@@ -87,6 +91,7 @@ const loginUser = async (req, res) => {
       res.status(401).json({ message: 'Invalid credentials' });
     }
   } catch (error) {
+    console.error('Login error:', error);
     res.status(500).json({ message: error.message });
   }
 };

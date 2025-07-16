@@ -1,0 +1,123 @@
+// models/Item.js
+
+const mongoose = require('mongoose');
+
+const VerificationDocumentSchema = new mongoose.Schema({
+  name: String,
+  type: String,
+  data: String // base64 string (if you're storing images/files as text)
+}, { _id: false });
+
+const ClaimSchema = new mongoose.Schema({
+  claimedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  verificationDocuments: [VerificationDocumentSchema],
+  notes: {
+    type: String,
+    maxlength: 500
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending'
+  }
+}, { timestamps: true });
+
+const NotificationSchema = new mongoose.Schema({
+  type: {
+    type: String,
+    enum: ['match_found', 'claim_submitted', 'item_returned', 'deadline_reminder']
+  },
+  message: String,
+  date: {
+    type: Date,
+    default: Date.now
+  },
+  read: {
+    type: Boolean,
+    default: false
+  }
+}, { _id: false });
+
+const ItemSchema = new mongoose.Schema({
+  title: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  description: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  category: {
+    type: String,
+    required: true,
+    enum: ['electronics', 'clothing', 'accessories', 'documents', 'keys', 'bags', 'books', 'other']
+  },
+  type: {
+    type: String,
+    required: true,
+    enum: ['lost', 'found']
+  },
+  status: {
+    type: String,
+    enum: ['active', 'claimed', 'returned', 'expired'],
+    default: 'active'
+  },
+  location: {
+    type: String,
+    required: true
+  },
+  date: {
+    type: Date,
+    required: true
+  },
+  images: [{
+    type: String // e.g., image URLs or base64 strings
+  }],
+  contactInfo: {
+    name: {
+      type: String,
+      required: true
+    },
+    email: {
+      type: String,
+      required: true
+    },
+    phone: {
+      type: String,
+      required: true
+    }
+  },
+  additionalDetails: {
+    color: String,
+    brand: String,
+    size: String,
+    identifiers: String
+  },
+  reportedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  claims: [ClaimSchema],
+  notifications: [NotificationSchema],
+  expiryDate: {
+    type: Date,
+    default: function () {
+      return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days from now
+    }
+  }
+}, {
+  timestamps: true
+});
+
+// Indexes for efficient search
+ItemSchema.index({ title: 'text', description: 'text', category: 1, type: 1, status: 1 });
+ItemSchema.index({ location: 1, date: -1 });
+
+module.exports = mongoose.model('Item', ItemSchema);
