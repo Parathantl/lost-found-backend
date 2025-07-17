@@ -54,54 +54,55 @@ const createItem = async (req, res) => {
 const getItems = async (req, res) => {
   try {
     const {
+      page = 1,
+      limit = 10,
+      search,
       type,
       category,
       status,
       location,
-      search,
-      page = 1,
-      limit = 10,
       sortBy = 'createdAt',
       sortOrder = 'desc'
     } = req.query;
 
-    // Build filter object
-    const filter = {};
-    
-    if (type) filter.type = type;
-    if (category) filter.category = category;
-    if (status) filter.status = status;
-    if (location) filter.location = { $regex: location, $options: 'i' };
-    
-    // Text search
+    // Build query
+    let query = {};
+
     if (search) {
-      filter.$or = [
+      query.$or = [
         { title: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
+        { description: { $regex: search, $options: 'i' } },
+        { location: { $regex: search, $options: 'i' } }
       ];
     }
 
-    // Pagination
-    const skip = (page - 1) * limit;
-    const sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+    if (type) query.type = type;
+    if (category) query.category = category;
+    if (status) query.status = status;
+    if (location) query.location = { $regex: location, $options: 'i' };
 
-    const items = await Item.find(filter)
-      .populate('reportedBy', 'name email')
-      .sort(sortOptions)
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Execute query with proper population
+    const items = await Item.find(query)
+      .populate('reportedBy', 'name email phone role')
+      .populate('claims.claimedBy', 'name email phone role branch')
+      .sort({ [sortBy]: sortOrder === 'desc' ? -1 : 1 })
       .skip(skip)
       .limit(parseInt(limit));
 
-    const total = await Item.countDocuments(filter);
+    const total = await Item.countDocuments(query);
 
     res.json({
       success: true,
       data: items,
       pagination: {
         current: parseInt(page),
-        pages: Math.ceil(total / limit),
+        pages: Math.ceil(total / parseInt(limit)),
         total,
-        hasNext: page * limit < total,
-        hasPrev: page > 1
+        hasNext: skip + items.length < total,
+        hasPrev: parseInt(page) > 1
       }
     });
   } catch (error) {

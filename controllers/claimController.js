@@ -76,8 +76,8 @@ const submitClaim = async (req, res) => {
 const getItemClaims = async (req, res) => {
   try {
     const item = await Item.findById(req.params.id)
-      .populate('claims.claimedBy', 'name email phone')
-      .populate('reportedBy', 'name email');
+      .populate('claims.claimedBy', 'name email phone role branch createdAt')
+      .populate('reportedBy', 'name email phone role');
 
     if (!item) {
       return res.status(404).json({ message: 'Item not found' });
@@ -90,6 +90,11 @@ const getItemClaims = async (req, res) => {
           _id: item._id,
           title: item.title,
           description: item.description,
+          type: item.type,
+          category: item.category,
+          location: item.location,
+          date: item.date,
+          status: item.status,
           reportedBy: item.reportedBy
         },
         claims: item.claims
