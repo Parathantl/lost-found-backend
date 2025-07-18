@@ -61,6 +61,7 @@ const getItems = async (req, res) => {
       category,
       status,
       location,
+      excludeStatus, // Add this new parameter
       sortBy = 'createdAt',
       sortOrder = 'desc'
     } = req.query;
@@ -80,6 +81,30 @@ const getItems = async (req, res) => {
     if (category) query.category = category;
     if (status) query.status = status;
     if (location) query.location = { $regex: location, $options: 'i' };
+
+    // Handle excludeStatus parameter
+    if (excludeStatus) {
+      query.status = { $ne: excludeStatus };
+      
+      // If both status and excludeStatus are provided, we need to handle the conflict
+      if (status && status !== excludeStatus) {
+        // If status is already set and different from excludeStatus, keep the status filter
+        query.status = status;
+      } else if (status === excludeStatus) {
+        // If trying to filter by a status and exclude the same status, return empty result
+        return res.json({
+          success: true,
+          data: [],
+          pagination: {
+            current: parseInt(page),
+            pages: 0,
+            total: 0,
+            hasNext: false,
+            hasPrev: false
+          }
+        });
+      }
+    }
 
     // Calculate pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
