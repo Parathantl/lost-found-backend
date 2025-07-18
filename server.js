@@ -33,6 +33,7 @@ app.use('/api/claims', require('./routes/claimRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
+app.use('/api/staff', require('./routes/staffRoutes'));
 
 // 404 Handler
 app.use('*', (req, res) => {
