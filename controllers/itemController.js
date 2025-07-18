@@ -61,7 +61,8 @@ const getItems = async (req, res) => {
       category,
       status,
       location,
-      excludeStatus, // Add this new parameter
+      excludeStatus,
+      handedOverToPolice,
       sortBy = 'createdAt',
       sortOrder = 'desc'
     } = req.query;
@@ -81,6 +82,15 @@ const getItems = async (req, res) => {
     if (category) query.category = category;
     if (status) query.status = status;
     if (location) query.location = { $regex: location, $options: 'i' };
+
+    // Handle police handover filter
+    if (handedOverToPolice !== undefined && handedOverToPolice !== '') {
+      if (handedOverToPolice === 'true') {
+        query.handedOverToPolice = true;
+      } else if (handedOverToPolice === 'false') {
+        query.handedOverToPolice = { $ne: true }; // Include null and false values
+      }
+    }
 
     // Handle excludeStatus parameter
     if (excludeStatus) {

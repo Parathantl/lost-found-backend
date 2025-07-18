@@ -24,16 +24,20 @@ const getStaffDashboardStats = async (req, res) => {
       activeItems,
       claimedItems,
       returnedItems,
+      expiredItems,
       recentItems,
       pendingClaims,
       lostItems,
       foundItems,
-      expiredItems
+      handedOverToPolice, // NEW: Police handover stats
+      policeHandoverRecentItems, // NEW: Recent police handovers
+      itemsAwaitingHandover // NEW: Expired found items not yet handed over
     ] = await Promise.all([
       Item.countDocuments(locationFilter),
       Item.countDocuments({ ...locationFilter, status: 'active' }),
       Item.countDocuments({ ...locationFilter, status: 'claimed' }),
       Item.countDocuments({ ...locationFilter, status: 'returned' }),
+      Item.countDocuments({ ...locationFilter, status: 'expired' }),
       Item.countDocuments({ 
         ...locationFilter, 
         createdAt: { $gte: startDate } 
@@ -44,14 +48,27 @@ const getStaffDashboardStats = async (req, res) => {
       }),
       Item.countDocuments({ ...locationFilter, type: 'lost' }),
       Item.countDocuments({ ...locationFilter, type: 'found' }),
+      // NEW: Count items handed over to police
       Item.countDocuments({ 
         ...locationFilter, 
-        status: 'active',
-        expiryDate: { $lt: new Date() }
+        handedOverToPolice: true 
+      }),
+      // NEW: Recent police handovers (within time range)
+      Item.countDocuments({ 
+        ...locationFilter, 
+        handedOverToPolice: true,
+        policeHandoverDate: { $gte: startDate }
+      }),
+      // NEW: Found items that are expired but not handed over to police
+      Item.countDocuments({ 
+        ...locationFilter, 
+        type: 'found',
+        status: 'expired',
+        handedOverToPolice: { $ne: true }
       })
     ]);
 
-    // Category breakdown for location
+    // Category breakdown for location (updated with police handover info)
     const categoryStats = await Item.aggregate([
       { $match: locationFilter },
       {
@@ -66,13 +83,20 @@ const getStaffDashboardStats = async (req, res) => {
           },
           returned: {
             $sum: { $cond: [{ $eq: ['$status', 'returned'] }, 1, 0] }
+          },
+          expired: {
+            $sum: { $cond: [{ $eq: ['$status', 'expired'] }, 1, 0] }
+          },
+          // NEW: Police handover count by category
+          handedOverToPolice: {
+            $sum: { $cond: [{ $eq: ['$handedOverToPolice', true] }, 1, 0] }
           }
         }
       },
       { $sort: { count: -1 } }
     ]);
 
-    // Daily statistics for the location
+    // Daily statistics for the location (updated with police handover trends)
     const dailyStats = await Item.aggregate([
       {
         $match: {
@@ -86,14 +110,41 @@ const getStaffDashboardStats = async (req, res) => {
             date: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
             type: '$type'
           },
+          count: { $sum: 1 },
+          handedOverToPolice: {
+            $sum: { $cond: [{ $eq: ['$handedOverToPolice', true] }, 1, 0] }
+          }
+        }
+      },
+      { $sort: { '_id.date': 1 } }
+    ]);
+
+    // NEW: Police handover trends (daily)
+    const policeHandoverTrends = await Item.aggregate([
+      {
+        $match: {
+          ...locationFilter,
+          handedOverToPolice: true,
+          policeHandoverDate: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            date: { $dateToString: { format: '%Y-%m-%d', date: '$policeHandoverDate' } }
+          },
           count: { $sum: 1 }
         }
       },
       { $sort: { '_id.date': 1 } }
     ]);
 
-    // Success rate for location
+    // Success rate for location (updated calculation)
     const successRate = foundItems > 0 ? ((returnedItems / foundItems) * 100).toFixed(1) : 0;
+    
+    // NEW: Police handover rate for expired found items
+    const policeHandoverRate = expiredItems > 0 ? 
+      ((handedOverToPolice / (expiredItems + handedOverToPolice)) * 100).toFixed(1) : 0;
 
     // Response time analysis for location
     const responseTimeStats = await Item.aggregate([
@@ -126,6 +177,55 @@ const getStaffDashboardStats = async (req, res) => {
       }
     ]);
 
+    // NEW: Police handover efficiency stats
+    const policeHandoverStats = await Item.aggregate([
+      {
+        $match: {
+          ...locationFilter,
+          handedOverToPolice: true,
+          policeHandoverDate: { $exists: true },
+          createdAt: { $exists: true }
+        }
+      },
+      {
+        $addFields: {
+          daysToHandover: {
+            $divide: [
+              { $subtract: ['$policeHandoverDate', '$createdAt'] },
+              1000 * 60 * 60 * 24
+            ]
+          }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          avgDaysToHandover: { $avg: '$daysToHandover' },
+          minDaysToHandover: { $min: '$daysToHandover' },
+          maxDaysToHandover: { $max: '$daysToHandover' }
+        }
+      }
+    ]);
+
+    // NEW: Top police stations (if this field exists)
+    const topPoliceStations = await Item.aggregate([
+      {
+        $match: {
+          ...locationFilter,
+          handedOverToPolice: true,
+          policeStation: { $exists: true, $ne: null }
+        }
+      },
+      {
+        $group: {
+          _id: '$policeStation',
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { count: -1 } },
+      { $limit: 5 }
+    ]);
+
     res.json({
       success: true,
       data: {
@@ -135,10 +235,14 @@ const getStaffDashboardStats = async (req, res) => {
           activeItems,
           claimedItems,
           returnedItems,
+          expiredItems,
           recentItems,
           pendingClaims,
-          expiredItems,
-          successRate: parseFloat(successRate)
+          handedOverToPolice, // NEW
+          policeHandoverRecentItems, // NEW
+          itemsAwaitingHandover, // NEW
+          successRate: parseFloat(successRate),
+          policeHandoverRate: parseFloat(policeHandoverRate) // NEW
         },
         breakdown: {
           lostItems,
@@ -147,12 +251,26 @@ const getStaffDashboardStats = async (req, res) => {
         },
         trends: {
           daily: dailyStats,
+          policeHandover: policeHandoverTrends, // NEW
           timeRange: daysAgo
         },
         performance: {
           avgResponseTime: responseTimeStats[0]?.avgResponseTime?.toFixed(1) || 0,
           minResponseTime: responseTimeStats[0]?.minResponseTime?.toFixed(1) || 0,
-          maxResponseTime: responseTimeStats[0]?.maxResponseTime?.toFixed(1) || 0
+          maxResponseTime: responseTimeStats[0]?.maxResponseTime?.toFixed(1) || 0,
+          // NEW: Police handover performance
+          avgDaysToHandover: policeHandoverStats[0]?.avgDaysToHandover?.toFixed(1) || 0,
+          minDaysToHandover: policeHandoverStats[0]?.minDaysToHandover?.toFixed(1) || 0,
+          maxDaysToHandover: policeHandoverStats[0]?.maxDaysToHandover?.toFixed(1) || 0
+        },
+        // NEW: Police handover details
+        policeHandover: {
+          totalHandedOver: handedOverToPolice,
+          recentHandovers: policeHandoverRecentItems,
+          awaitingHandover: itemsAwaitingHandover,
+          handoverRate: parseFloat(policeHandoverRate),
+          topPoliceStations: topPoliceStations,
+          trends: policeHandoverTrends
         }
       }
     });
