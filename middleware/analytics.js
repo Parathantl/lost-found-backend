@@ -60,8 +60,6 @@ const logApiUsage = (req, res, next) => {
       timestamp: new Date()
     };
     
-    // In a production environment, you might want to store this in a dedicated analytics database
-    // console.log('API Usage:', logData);
   });
   
   next();

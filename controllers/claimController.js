@@ -35,16 +35,31 @@ const submitClaim = async (req, res) => {
       return res.status(400).json({ message: 'You have already submitted a claim for this item' });
     }
 
-    // Add new claim
+    // IMPORTANT: Explicitly map the verification documents to ensure all fields are preserved
+    const processedDocuments = (verificationDocuments || []).map(doc => {
+      return {
+        url: doc.url,
+        name: doc.name,
+        type: doc.type,
+        size: doc.size,
+        publicId: doc.publicId
+      };
+    });
+
+    // Create new claim with explicit structure
     const newClaim = {
       claimedBy: req.user.id,
-      verificationDocuments: verificationDocuments || [],
+      verificationDocuments: processedDocuments,
       notes: notes || '',
       status: 'pending'
     };
 
+    // Add claim to item
     item.claims.push(newClaim);
     await item.save();
+
+    // Verify what was actually saved
+    const savedItem = await Item.findById(itemId);
 
     // Populate the claim data for response
     const populatedItem = await Item.findById(itemId)
@@ -57,7 +72,9 @@ const submitClaim = async (req, res) => {
       message: 'Claim submitted successfully',
       data: submittedClaim
     });
+
   } catch (error) {
+    console.error('Submit claim error:', error);
     res.status(500).json({ message: error.message });
   }
 };

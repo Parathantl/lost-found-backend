@@ -3,10 +3,28 @@
 const mongoose = require('mongoose');
 
 const VerificationDocumentSchema = new mongoose.Schema({
-  name: String,
-  type: String,
-  data: String // base64 string (if you're storing images/files as text)
-}, { _id: false });
+  url: {
+    type: String,
+    required: true
+  },
+  name: {
+    type: String,
+    required: true
+  },
+  type: {
+    type: String,
+    required: true
+  },
+  size: {
+    type: Number
+  },
+  publicId: {
+    type: String
+  }
+}, { 
+  _id: false,  // Don't create _id for subdocuments
+  strict: false // Allow additional fields if needed
+});
 
 const ClaimSchema = new mongoose.Schema({
   claimedBy: {
