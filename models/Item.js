@@ -104,6 +104,14 @@ const ItemSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  handedOverToPolice: {
+    type: Boolean,
+    default: false
+  },
+  policeReportNumber: {
+    type: String,
+    trim: true
+  },  
   claims: [ClaimSchema],
   notifications: [NotificationSchema],
   expiryDate: {

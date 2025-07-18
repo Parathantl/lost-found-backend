@@ -8,14 +8,14 @@ const {
   updateItem,
   deleteItem,
   getMyItems,
-  searchMatches
+  searchMatches,
+  handoverToPolice
 } = require('../controllers/itemController');
 const {
   submitClaim,
   getItemClaims,
   updateClaimStatus,
   markItemReturned,
-  getMyClaims
 } = require('../controllers/claimController');
 const { protect, staffOrAdmin } = require('../middleware/auth');
 
@@ -57,5 +57,11 @@ router.post('/:id/claim', protect, claimValidation, submitClaim); // Private - S
 router.get('/:id/claims', protect, staffOrAdmin, getItemClaims);  // Staff/Admin - Get item claims
 router.put('/:itemId/claims/:claimId', protect, staffOrAdmin, updateClaimStatus); // Staff/Admin - Update claim status
 router.put('/:id/return', protect, staffOrAdmin, markItemReturned); // Staff/Admin - Mark as returned
+router.put(
+  '/handover/:id',
+  protect,
+  staffOrAdmin,
+  handoverToPolice
+);
 
 module.exports = router;

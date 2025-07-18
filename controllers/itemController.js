@@ -268,6 +268,47 @@ const searchMatches = async (req, res) => {
   }
 };
 
+const handoverToPolice = async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (!['staff', 'admin'].includes(user.role)) {
+      return res.status(403).json({ error: 'Only staff or admin can mark items as handed over to police.' });
+    }
+
+    const { id } = req.params;
+    const { policeReportNumber } = req.body;
+
+    if (!policeReportNumber || policeReportNumber.trim() === '') {
+      return res.status(400).json({ error: 'Police report number is required.' });
+    }
+
+    const item = await Item.findById(id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+
+    if (item.handedOverToPolice) {
+      return res.status(400).json({ error: 'Item has already been handed over to the police.' });
+    }
+
+    const itemAge = Date.now() - new Date(item.date).getTime();
+    const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+
+    if (itemAge < THIRTY_DAYS) {
+      return res.status(400).json({ error: 'Item is not older than 30 days.' });
+    }
+
+    item.handedOverToPolice = true;
+    item.policeReportNumber = policeReportNumber;
+    item.status = 'expired'; // Optionally mark it as expired
+    await item.save();
+
+    return res.status(200).json({ message: 'Item marked as handed over to police.', item });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Server error' });
+  }
+};
+
 module.exports = {
   createItem,
   getItems,
@@ -275,5 +316,6 @@ module.exports = {
   updateItem,
   deleteItem,
   getMyItems,
-  searchMatches
+  searchMatches,
+  handoverToPolice,
 };
