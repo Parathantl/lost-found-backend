@@ -127,5 +127,25 @@ const ItemSchema = new mongoose.Schema({
 // Indexes for efficient search
 ItemSchema.index({ title: 'text', description: 'text', category: 1, type: 1, status: 1 });
 ItemSchema.index({ location: 1, date: -1 });
+ItemSchema.index({ 'claims.claimedBy': 1 });
+ItemSchema.index({ 'claims.status': 1 });
+
+// Pre-save middleware to automatically expire items
+ItemSchema.pre('save', function(next) {
+  if (this.status === 'active' && this.expiryDate < new Date()) {
+    this.status = 'expired';
+  }
+  next();
+});
+
+// Method to get approved claim
+ItemSchema.methods.getApprovedClaim = function() {
+  return this.claims.find(claim => claim.status === 'approved');
+};
+
+// Method to check if item can accept new claims
+ItemSchema.methods.canAcceptClaims = function() {
+  return this.status === 'active' && this.expiryDate > new Date();
+};
 
 module.exports = mongoose.model('Item', ItemSchema);

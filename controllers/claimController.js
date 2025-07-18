@@ -1,8 +1,9 @@
 // controllers/claimController.js
 const Item = require('../models/Item');
+const User = require('../models/User');
 const { validationResult } = require('express-validator');
 
-// @desc    Submit claim for found item
+// @desc    Submit claim for an item
 // @route   POST /api/items/:id/claim
 // @access  Private
 const submitClaim = async (req, res) => {
@@ -13,22 +14,19 @@ const submitClaim = async (req, res) => {
     }
 
     const { verificationDocuments, notes } = req.body;
-    
-    const item = await Item.findById(req.params.id);
-    
+    const itemId = req.params.id;
+
+    const item = await Item.findById(itemId);
     if (!item) {
       return res.status(404).json({ message: 'Item not found' });
     }
 
-    if (item.type !== 'found') {
-      return res.status(400).json({ message: 'Can only claim found items' });
-    }
-
+    // Check if item is still active
     if (item.status !== 'active') {
-      return res.status(400).json({ message: 'Item is not available for claiming' });
+      return res.status(400).json({ message: 'This item is no longer available for claims' });
     }
 
-    // Check if user already submitted a claim
+    // Check if user has already claimed this item
     const existingClaim = item.claims.find(
       claim => claim.claimedBy.toString() === req.user.id
     );
@@ -41,43 +39,36 @@ const submitClaim = async (req, res) => {
     const newClaim = {
       claimedBy: req.user.id,
       verificationDocuments: verificationDocuments || [],
-      notes,
+      notes: notes || '',
       status: 'pending'
     };
 
     item.claims.push(newClaim);
-
-    // Add notification
-    item.notifications.push({
-      type: 'claim_submitted',
-      message: `New claim submitted for ${item.title}`,
-      date: new Date()
-    });
-
     await item.save();
 
-    const populatedItem = await Item.findById(item._id)
-      .populate('claims.claimedBy', 'name email')
-      .populate('reportedBy', 'name email');
+    // Populate the claim data for response
+    const populatedItem = await Item.findById(itemId)
+      .populate('claims.claimedBy', 'name email phone role');
+
+    const submittedClaim = populatedItem.claims[populatedItem.claims.length - 1];
 
     res.status(201).json({
       success: true,
       message: 'Claim submitted successfully',
-      data: populatedItem
+      data: submittedClaim
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// @desc    Get all claims for an item (Staff/Admin only)
+// @desc    Get claims for an item
 // @route   GET /api/items/:id/claims
 // @access  Private (Staff/Admin)
 const getItemClaims = async (req, res) => {
   try {
     const item = await Item.findById(req.params.id)
-      .populate('claims.claimedBy', 'name email phone role branch createdAt')
-      .populate('reportedBy', 'name email phone role');
+      .populate('claims.claimedBy', 'name email phone role branch');
 
     if (!item) {
       return res.status(404).json({ message: 'Item not found' });
@@ -89,13 +80,8 @@ const getItemClaims = async (req, res) => {
         item: {
           _id: item._id,
           title: item.title,
-          description: item.description,
-          type: item.type,
-          category: item.category,
-          location: item.location,
-          date: item.date,
           status: item.status,
-          reportedBy: item.reportedBy
+          type: item.type
         },
         claims: item.claims
       }
@@ -105,50 +91,52 @@ const getItemClaims = async (req, res) => {
   }
 };
 
-// @desc    Update claim status (Staff/Admin only)
+// @desc    Update claim status
 // @route   PUT /api/items/:itemId/claims/:claimId
 // @access  Private (Staff/Admin)
 const updateClaimStatus = async (req, res) => {
   try {
-    const { status, notes } = req.body;
     const { itemId, claimId } = req.params;
+    const { status, notes } = req.body;
 
-    if (!['pending', 'verified', 'rejected'].includes(status)) {
-      return res.status(400).json({ message: 'Invalid claim status' });
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ message: 'Invalid status' });
     }
 
     const item = await Item.findById(itemId);
-    
     if (!item) {
       return res.status(404).json({ message: 'Item not found' });
     }
 
     const claim = item.claims.id(claimId);
-    
     if (!claim) {
       return res.status(404).json({ message: 'Claim not found' });
     }
 
-    // Update claim
+    // Update claim status
     claim.status = status;
-    if (notes) claim.notes = notes;
+    if (notes) {
+      claim.notes = notes;
+    }
 
-    // If claim is verified, update item status
-    if (status === 'verified') {
+    // If claim is approved, update item status and reject other pending claims
+    if (status === 'approved') {
       item.status = 'claimed';
       
-      // Add notification
-      item.notifications.push({
-        type: 'claim_verified',
-        message: `Your claim for ${item.title} has been verified`,
-        date: new Date()
+      // Reject all other pending claims for this item
+      item.claims.forEach(otherClaim => {
+        if (otherClaim._id.toString() !== claimId && otherClaim.status === 'pending') {
+          otherClaim.status = 'rejected';
+          otherClaim.notes = 'Automatically rejected - another claim was approved';
+        }
       });
     }
 
     await item.save();
 
+    // Populate and return updated item
     const populatedItem = await Item.findById(itemId)
-      .populate('claims.claimedBy', 'name email')
+      .populate('claims.claimedBy', 'name email phone role branch')
       .populate('reportedBy', 'name email');
 
     res.json({
@@ -161,45 +149,48 @@ const updateClaimStatus = async (req, res) => {
   }
 };
 
-// @desc    Mark item as returned (Staff/Admin only)
+// @desc    Mark item as returned
 // @route   PUT /api/items/:id/return
 // @access  Private (Staff/Admin)
 const markItemReturned = async (req, res) => {
   try {
     const { claimId, returnNotes } = req.body;
-    
-    const item = await Item.findById(req.params.id);
-    
+    const itemId = req.params.id;
+
+    const item = await Item.findById(itemId);
     if (!item) {
       return res.status(404).json({ message: 'Item not found' });
     }
 
+    // Check if item has been claimed
     if (item.status !== 'claimed') {
-      return res.status(400).json({ message: 'Item must be claimed before it can be returned' });
+      return res.status(400).json({ message: 'Item must be claimed before it can be marked as returned' });
+    }
+
+    // If claimId is provided, verify the claim exists and is approved
+    if (claimId) {
+      const claim = item.claims.id(claimId);
+      if (!claim) {
+        return res.status(404).json({ message: 'Claim not found' });
+      }
+      if (claim.status !== 'approved') {
+        return res.status(400).json({ message: 'Only approved claims can be marked as returned' });
+      }
     }
 
     // Update item status
     item.status = 'returned';
-
-    // Add notification
-    item.notifications.push({
-      type: 'item_returned',
-      message: `${item.title} has been successfully returned`,
-      date: new Date()
-    });
-
-    // Add return notes to the verified claim
-    if (claimId) {
-      const claim = item.claims.id(claimId);
-      if (claim) {
-        claim.notes = claim.notes ? `${claim.notes}\n\nReturn Notes: ${returnNotes}` : `Return Notes: ${returnNotes}`;
-      }
+    
+    // Add return notes if provided
+    if (returnNotes) {
+      item.returnNotes = returnNotes;
+      item.returnDate = new Date();
     }
 
     await item.save();
 
-    const populatedItem = await Item.findById(item._id)
-      .populate('claims.claimedBy', 'name email')
+    const populatedItem = await Item.findById(itemId)
+      .populate('claims.claimedBy', 'name email phone role')
       .populate('reportedBy', 'name email');
 
     res.json({
@@ -217,37 +208,75 @@ const markItemReturned = async (req, res) => {
 // @access  Private
 const getMyClaims = async (req, res) => {
   try {
-    const items = await Item.find({
-      'claims.claimedBy': req.user.id
-    })
-    .populate('reportedBy', 'name email')
-    .select('title description type category location date status claims');
+    const { page = 1, limit = 10, status } = req.query;
 
-    // Filter to only show user's claims
-    const userClaims = items.map(item => {
-      const userClaim = item.claims.find(
-        claim => claim.claimedBy.toString() === req.user.id
-      );
-      
-      return {
-        item: {
-          _id: item._id,
-          title: item.title,
-          description: item.description,
-          type: item.type,
-          category: item.category,
-          location: item.location,
-          date: item.date,
-          status: item.status,
-          reportedBy: item.reportedBy
-        },
-        claim: userClaim
-      };
-    });
+    // Build aggregation pipeline to find items with user's claims
+    const pipeline = [
+      { $unwind: '$claims' },
+      { $match: { 'claims.claimedBy': req.user._id } },
+      ...(status ? [{ $match: { 'claims.status': status } }] : []),
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'reportedBy',
+          foreignField: '_id',
+          as: 'reportedBy'
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'claims.claimedBy',
+          foreignField: '_id',
+          as: 'claims.claimedBy'
+        }
+      },
+      { $unwind: '$reportedBy' },
+      { $unwind: '$claims.claimedBy' },
+      {
+        $project: {
+          title: 1,
+          description: 1,
+          category: 1,
+          type: 1,
+          status: 1,
+          location: 1,
+          date: 1,
+          images: 1,
+          createdAt: 1,
+          'reportedBy.name': 1,
+          'reportedBy.email': 1,
+          claim: '$claims'
+        }
+      },
+      { $sort: { 'claim.createdAt': -1 } },
+      { $skip: (parseInt(page) - 1) * parseInt(limit) },
+      { $limit: parseInt(limit) }
+    ];
+
+    const claims = await Item.aggregate(pipeline);
+
+    // Count total for pagination
+    const countPipeline = [
+      { $unwind: '$claims' },
+      { $match: { 'claims.claimedBy': req.user._id } },
+      ...(status ? [{ $match: { 'claims.status': status } }] : []),
+      { $count: 'total' }
+    ];
+
+    const countResult = await Item.aggregate(countPipeline);
+    const total = countResult[0]?.total || 0;
 
     res.json({
       success: true,
-      data: userClaims
+      data: claims,
+      pagination: {
+        current: parseInt(page),
+        pages: Math.ceil(total / parseInt(limit)),
+        total,
+        hasNext: (parseInt(page) * parseInt(limit)) < total,
+        hasPrev: parseInt(page) > 1
+      }
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
