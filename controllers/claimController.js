@@ -2,6 +2,7 @@
 const Item = require('../models/Item');
 const User = require('../models/User');
 const { validationResult } = require('express-validator');
+const NotificationService = require('../services/notificationService');
 
 // @desc    Submit claim for an item
 // @route   POST /api/items/:id/claim
@@ -58,8 +59,11 @@ const submitClaim = async (req, res) => {
     item.claims.push(newClaim);
     await item.save();
 
-    // Verify what was actually saved
-    const savedItem = await Item.findById(itemId);
+    try {
+      await NotificationService.handleClaimSubmitted(item, req.user);
+    } catch (notificationError) {
+      console.error('Notification error (non-blocking):', notificationError);
+    }
 
     // Populate the claim data for response
     const populatedItem = await Item.findById(itemId)
@@ -120,7 +124,10 @@ const updateClaimStatus = async (req, res) => {
       return res.status(400).json({ message: 'Invalid status' });
     }
 
-    const item = await Item.findById(itemId);
+    const item = await Item.findById(itemId)
+      .populate('reportedBy', 'name email')
+      .populate('claims.claimedBy', 'name email');
+    
     if (!item) {
       return res.status(404).json({ message: 'Item not found' });
     }
@@ -130,6 +137,9 @@ const updateClaimStatus = async (req, res) => {
       return res.status(404).json({ message: 'Claim not found' });
     }
 
+    // Store original status for comparison
+    const originalStatus = claim.status;
+    
     // Update claim status
     claim.status = status;
     if (notes) {
@@ -151,6 +161,105 @@ const updateClaimStatus = async (req, res) => {
 
     await item.save();
 
+    try {
+      if (originalStatus !== status) {
+        const claimant = claim.claimedBy;
+        const reporter = item.reportedBy;
+        const approver = req.user;
+
+        switch (status) {
+          case 'approved':
+            // Notify the claimant that their claim was approved
+            await NotificationService.handleClaimApproved(item, claimant, approver);
+            
+            // Notify the item reporter that a claim was approved
+            if (reporter && reporter._id.toString() !== claimant._id.toString()) {
+              await NotificationService.createNotification(reporter._id, {
+                type: 'claim_approved',
+                title: 'Claim Approved for Your Item',
+                message: `A claim for your ${item.type} item "${item.title}" has been approved. The claimant may contact you soon.`,
+                relatedItem: item._id,
+                relatedUser: claimant._id,
+                data: {
+                  itemTitle: item.title,
+                  itemType: item.type,
+                  claimantName: claimant.name,
+                  approvedBy: approver.name,
+                  contactInfo: item.contactInfo
+                }
+              });
+            }
+
+            const rejectedClaims = item.claims.filter(c => 
+              c._id.toString() !== claimId && 
+              c.status === 'rejected' && 
+              c.notes && c.notes.includes('Automatically rejected')
+            );
+
+            for (const rejectedClaim of rejectedClaims) {
+              await NotificationService.createNotification(rejectedClaim.claimedBy._id, {
+                type: 'claim_rejected',
+                title: 'Claim Not Approved',
+                message: `Your claim for "${item.title}" was not approved. Another claim was accepted first.`,
+                relatedItem: item._id,
+                relatedUser: approver._id,
+                data: {
+                  itemTitle: item.title,
+                  itemType: item.type,
+                  rejectedBy: approver.name,
+                  reason: 'Another claim was approved first'
+                }
+              });
+            }
+            break;
+
+          case 'rejected':
+            // Notify the claimant that their claim was rejected
+            const rejectionReason = notes || 'Claim verification failed';
+            await NotificationService.handleClaimRejected(item, claimant, approver, rejectionReason);
+            
+            // Notify the item reporter about the rejection (optional - you might not want this)
+            if (reporter && reporter._id.toString() !== claimant._id.toString()) {
+              await NotificationService.createNotification(reporter._id, {
+                type: 'claim_rejected',
+                title: 'Claim Rejected for Your Item',
+                message: `A claim for your ${item.type} item "${item.title}" has been reviewed and not approved.`,
+                relatedItem: item._id,
+                relatedUser: claimant._id,
+                data: {
+                  itemTitle: item.title,
+                  itemType: item.type,
+                  claimantName: claimant.name,
+                  rejectedBy: approver.name,
+                  reason: rejectionReason
+                }
+              });
+            }
+            break;
+
+          case 'pending':
+            // If status is changed back to pending (rare case)
+            if (originalStatus !== 'pending') {
+              await NotificationService.createNotification(claimant._id, {
+                type: 'claim_submitted',
+                title: 'Claim Status Updated',
+                message: `Your claim for "${item.title}" status has been updated to pending review.`,
+                relatedItem: item._id,
+                relatedUser: approver._id,
+                data: {
+                  itemTitle: item.title,
+                  itemType: item.type,
+                  updatedBy: approver.name
+                }
+              });
+            }
+            break;
+        }
+      }
+    } catch (notificationError) {
+      console.error('❌ Error sending notifications (non-blocking):', notificationError);
+    }
+
     // Populate and return updated item
     const populatedItem = await Item.findById(itemId)
       .populate('claims.claimedBy', 'name email phone role branch')
@@ -162,6 +271,7 @@ const updateClaimStatus = async (req, res) => {
       data: populatedItem
     });
   } catch (error) {
+    console.error('Update claim status error:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -225,78 +335,80 @@ const markItemReturned = async (req, res) => {
 // @access  Private
 const getMyClaims = async (req, res) => {
   try {
-    const { page = 1, limit = 10, status } = req.query;
+    const userId = req.user.id;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
 
-    // Build aggregation pipeline to find items with user's claims
-    const pipeline = [
-      { $unwind: '$claims' },
-      { $match: { 'claims.claimedBy': req.user._id } },
-      ...(status ? [{ $match: { 'claims.status': status } }] : []),
-      {
-        $lookup: {
-          from: 'users',
-          localField: 'reportedBy',
-          foreignField: '_id',
-          as: 'reportedBy'
-        }
-      },
-      {
-        $lookup: {
-          from: 'users',
-          localField: 'claims.claimedBy',
-          foreignField: '_id',
-          as: 'claims.claimedBy'
-        }
-      },
-      { $unwind: '$reportedBy' },
-      { $unwind: '$claims.claimedBy' },
-      {
-        $project: {
-          title: 1,
-          description: 1,
-          category: 1,
-          type: 1,
-          status: 1,
-          location: 1,
-          date: 1,
-          images: 1,
-          createdAt: 1,
-          'reportedBy.name': 1,
-          'reportedBy.email': 1,
-          claim: '$claims'
-        }
-      },
-      { $sort: { 'claim.createdAt': -1 } },
-      { $skip: (parseInt(page) - 1) * parseInt(limit) },
-      { $limit: parseInt(limit) }
-    ];
+    const itemsWithMyClaims = await Item.find({
+      'claims.claimedBy': userId
+    })
+    .populate('reportedBy', 'name email phone')
+    .populate('claims.claimedBy', 'name email phone')
+    .sort({ createdAt: -1 });
 
-    const claims = await Item.aggregate(pipeline);
+    const userClaims = [];
+    
+    itemsWithMyClaims.forEach(item => {
+      const userClaimsOnItem = item.claims.filter(claim => 
+        claim.claimedBy._id.toString() === userId
+      );
+      
+      // For each claim by this user, create a result object
+      userClaimsOnItem.forEach(claim => {
+        userClaims.push({
+          // The item data (what was lost/found)
+          _id: item._id,
+          title: item.title,
+          description: item.description,
+          category: item.category,
+          type: item.type,
+          status: item.status,
+          location: item.location,
+          date: item.date,
+          images: item.images,
+          reportedBy: item.reportedBy,
+          createdAt: item.createdAt,
+          
+          // The user's claim data (nested under 'claim')
+          claim: {
+            _id: claim._id,
+            claimedBy: claim.claimedBy,
+            verificationDocuments: claim.verificationDocuments,
+            notes: claim.notes,
+            status: claim.status,
+            createdAt: claim.createdAt,
+            updatedAt: claim.updatedAt
+          }
+        });
+      });
+    });
 
-    // Count total for pagination
-    const countPipeline = [
-      { $unwind: '$claims' },
-      { $match: { 'claims.claimedBy': req.user._id } },
-      ...(status ? [{ $match: { 'claims.status': status } }] : []),
-      { $count: 'total' }
-    ];
+    userClaims.sort((a, b) => new Date(b.claim.createdAt) - new Date(a.claim.createdAt));
 
-    const countResult = await Item.aggregate(countPipeline);
-    const total = countResult[0]?.total || 0;
+    const paginatedClaims = userClaims.slice(skip, skip + limit);
+
+    const pagination = {
+      current: page,
+      pages: Math.ceil(userClaims.length / limit),
+      total: userClaims.length,
+      hasNext: page < Math.ceil(userClaims.length / limit),
+      hasPrev: page > 1
+    };
 
     res.json({
       success: true,
-      data: claims,
-      pagination: {
-        current: parseInt(page),
-        pages: Math.ceil(total / parseInt(limit)),
-        total,
-        hasNext: (parseInt(page) * parseInt(limit)) < total,
-        hasPrev: parseInt(page) > 1
-      }
+      data: paginatedClaims,
+      pagination
     });
+
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Error getting user claims:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve claims',
+      error: error.message
+    });
   }
 };
 

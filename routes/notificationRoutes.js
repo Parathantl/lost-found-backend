@@ -1,23 +1,21 @@
-// routes/notificationRoutes.js
 const express = require('express');
-const {
-  getNotifications,
-  markNotificationRead,
-  markAllNotificationsRead,
-  createSystemNotification,
-  sendDeadlineReminders
-} = require('../controllers/notificationController');
-const { protect, admin } = require('../middleware/auth');
-
 const router = express.Router();
+const notificationsController = require('../controllers/notificationsController');
+const auth = require('../middleware/auth'); 
 
-// User notification routes
-router.get('/', protect, getNotifications);
-router.put('/:notificationId/read', protect, markNotificationRead);
-router.put('/mark-all-read', protect, markAllNotificationsRead);
+// GET /api/notifications - Get user's notifications
+router.get('/', auth.protect, notificationsController.getNotifications);
 
-// Admin notification routes
-router.post('/system', protect, admin, createSystemNotification);
-router.post('/deadline-reminders', protect, admin, sendDeadlineReminders);
+// GET /api/notifications/unread-count - Get unread count
+router.get('/unread-count', auth.protect, notificationsController.getUnreadCount);
+
+// PUT /api/notifications/:id/read - Mark notification as read
+router.put('/:id/read',auth.protect, notificationsController.markAsRead);
+
+// PUT /api/notifications/mark-all-read - Mark all notifications as read
+router.put('/mark-all-read', auth.protect, notificationsController.markAllAsRead);
+
+// DELETE /api/notifications/:id - Delete notification
+router.delete('/:id', auth.protect, notificationsController.deleteNotification);
 
 module.exports = router;

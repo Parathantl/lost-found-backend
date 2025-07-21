@@ -115,7 +115,6 @@ class EmailService {
   async testConnection() {
     try {
       await this.transporter.verify();
-      console.log('✅ Email service is ready to send emails');
       return true;
     } catch (error) {
       console.error('❌ Email service error:', error);
@@ -125,51 +124,3 @@ class EmailService {
 }
 
 module.exports = new EmailService();
-
-// Alternative configuration options if Gmail doesn't work:
-
-/*
-// For Outlook/Hotmail
-this.transporter = nodemailer.createTransport({
-  service: 'hotmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
-});
-
-// For custom SMTP (like your hosting provider)
-this.transporter = nodemailer.createTransport({
-  host: 'smtp.yourdomain.com',
-  port: 587,
-  secure: false, // true for 465, false for other ports
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
-});
-
-// For development/testing (Ethereal Email - fake SMTP)
-this.transporter = nodemailer.createTransport({
-  host: 'smtp.ethereal.email',
-  port: 587,
-  auth: {
-    user: 'ethereal.user@ethereal.email',
-    pass: 'verysecret'
-  }
-});
-*/
-
-// Gmail Setup Instructions:
-/*
-1. Enable 2-Factor Authentication on your Google account
-2. Go to Google Account settings > Security > App passwords
-3. Generate an app password for "Mail"
-4. Use your Gmail address as EMAIL_USER
-5. Use the generated app password (not your regular password) as EMAIL_PASS
-
-Example .env:
-EMAIL_USER=youremail@gmail.com
-EMAIL_PASS=abcd efgh ijkl mnop  (16-character app password)
-FRONTEND_URL=http://localhost:5173
-*/

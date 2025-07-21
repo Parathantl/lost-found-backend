@@ -219,7 +219,6 @@ const getUserDashboardStats = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // User's items stats
     const [
       myTotalItems,
       myLostItems,
@@ -238,50 +237,69 @@ const getUserDashboardStats = async (req, res) => {
       Item.countDocuments({ 'claims.claimedBy': userId })
     ]);
 
-    // Recent items by user
     const myRecentItems = await Item.find({ reportedBy: userId })
       .sort({ createdAt: -1 })
       .limit(5)
       .select('title type category status createdAt location');
 
-    // My recent claims
-    const myRecentClaims = await Item.find({ 'claims.claimedBy': userId })
-      .sort({ 'claims.claimDate': -1 })
-      .limit(5)
-      .select('title type category status claims')
-      .populate('reportedBy', 'name');
+    const myRecentClaims = await Item.find({ 
+      'claims.claimedBy': userId 
+    })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .select('title type category status claims createdAt location')
+      .populate('reportedBy', 'name email')
+      .populate('claims.claimedBy', 'name email'); 
 
-    // Filter to only show user's claims
-    const formattedClaims = myRecentClaims.map(item => {
-      const userClaim = item.claims.find(claim => 
-        claim.claimedBy.toString() === userId
+    const formattedClaims = [];
+    
+    myRecentClaims.forEach(item => {
+      // Find all claims by this user on this item
+      const userClaims = item.claims.filter(claim => 
+        claim.claimedBy._id.toString() === userId
       );
-      return {
-        item: {
-          title: item.title,
-          type: item.type,
-          category: item.category,
-          status: item.status,
-          reportedBy: item.reportedBy
-        },
-        claim: userClaim
-      };
+      
+      // Add each claim to the formatted array
+      userClaims.forEach(claim => {
+        formattedClaims.push({
+          item: {
+            _id: item._id,
+            title: item.title,
+            type: item.type,
+            category: item.category,
+            status: item.status,
+            location: item.location,
+            reportedBy: item.reportedBy
+          },
+          claim: claim
+        });
+      });
     });
 
-    // Notifications for user
-    const myNotifications = await Item.find({
-      $or: [
-        { reportedBy: userId },
-        { 'claims.claimedBy': userId }
-      ],
-      'notifications.read': false
-    })
-    .select('title notifications')
-    .sort({ 'notifications.date': -1 });
+    // Sort by claim creation date and limit to 5 most recent
+    formattedClaims.sort((a, b) => new Date(b.claim.createdAt) - new Date(a.claim.createdAt));
+    const recentClaims = formattedClaims.slice(0, 5);
 
-    const unreadNotifications = myNotifications.reduce((total, item) => {
-      return total + item.notifications.filter(notif => !notif.read).length;
-    }, 0);
+    let myNotifications = [];
+    let unreadNotifications = 0;
+    
+    try {
+      myNotifications = await Item.find({
+        $or: [
+          { reportedBy: userId },
+          { 'claims.claimedBy': userId }
+        ],
+        'notifications.read': false
+      })
+      .select('title notifications')
+      .sort({ 'notifications.date': -1 });
+
+      unreadNotifications = myNotifications.reduce((total, item) => {
+        return total + (item.notifications?.filter(notif => !notif.read)?.length || 0);
+      }, 0);
+    } catch (notifError) {
+      console.error('Error fetching notifications:', notifError);
+    }
 
     res.json({
       success: true,
@@ -298,13 +316,17 @@ const getUserDashboardStats = async (req, res) => {
         },
         recentActivity: {
           items: myRecentItems,
-          claims: formattedClaims
+          claims: recentClaims
         },
         notifications: myNotifications.slice(0, 10)
       }
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Dashboard stats error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: error.message 
+    });
   }
 };
 

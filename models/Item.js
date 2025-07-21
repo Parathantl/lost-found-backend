@@ -44,22 +44,6 @@ const ClaimSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-const NotificationSchema = new mongoose.Schema({
-  type: {
-    type: String,
-    enum: ['match_found', 'claim_submitted', 'item_returned', 'deadline_reminder']
-  },
-  message: String,
-  date: {
-    type: Date,
-    default: Date.now
-  },
-  read: {
-    type: Boolean,
-    default: false
-  }
-}, { _id: false });
-
 const ItemSchema = new mongoose.Schema({
   title: {
     type: String,
@@ -131,7 +115,6 @@ const ItemSchema = new mongoose.Schema({
     trim: true
   },  
   claims: [ClaimSchema],
-  notifications: [NotificationSchema],
   expiryDate: {
     type: Date,
     default: function () {
