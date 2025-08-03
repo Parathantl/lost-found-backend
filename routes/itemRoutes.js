@@ -29,6 +29,7 @@ const itemValidation = [
     .withMessage('Invalid category'),
   body('type').isIn(['lost', 'found']).withMessage('Type must be either lost or found'),
   body('location').notEmpty().withMessage('Location is required'),
+  body('district').notEmpty().withMessage('District is required'),
   body('date').isISO8601().withMessage('Valid date is required'),
   body('contactInfo.name').notEmpty().withMessage('Contact name is required'),
   body('contactInfo.email').isEmail().withMessage('Valid contact email is required'),

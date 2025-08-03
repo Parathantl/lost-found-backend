@@ -18,6 +18,7 @@ const createItem = async (req, res) => {
       category,
       type,
       location,
+      district,
       date,
       images,
       contactInfo,
@@ -30,6 +31,7 @@ const createItem = async (req, res) => {
       category,
       type,
       location,
+      district,
       date,
       images: images || [],
       contactInfo,
@@ -61,6 +63,7 @@ const getItems = async (req, res) => {
       category,
       status,
       location,
+      district,
       excludeStatus,
       handedOverToPolice,
       sortBy = 'createdAt',
@@ -74,7 +77,9 @@ const getItems = async (req, res) => {
       query.$or = [
         { title: { $regex: search, $options: 'i' } },
         { description: { $regex: search, $options: 'i' } },
-        { location: { $regex: search, $options: 'i' } }
+        { location: { $regex: search, $options: 'i' } },
+        { district: { $regex: search, $options: 'i' } },
+        { category: { $regex: search, $options: 'i' } }
       ];
     }
 
@@ -82,6 +87,7 @@ const getItems = async (req, res) => {
     if (category) query.category = category;
     if (status) query.status = status;
     if (location) query.location = { $regex: location, $options: 'i' };
+    if (district) query.district = { $regex: district, $options: 'i' };
 
     // Handle police handover filter
     if (handedOverToPolice !== undefined && handedOverToPolice !== '') {
